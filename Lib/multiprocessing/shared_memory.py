@@ -285,11 +285,12 @@ class ShareableList:
     }
     _alignment = 8
     _back_transforms_mapping = {
-        0: lambda value: value,                   # int, float, bool
-        1: lambda value: value.rstrip(b'\x00').decode(_encoding),  # str
-        2: lambda value: value.rstrip(b'\x00'),   # bytes
-        3: lambda _value: None,                   # None
+        0: lambda value: value,                         # int, float, bool
+        1: lambda value: value.rstrip(b'\x00')[:-1].decode(_encoding),  # str
+        2: lambda value: value.rstrip(b'\x00')[:-1],    # bytes
+        3: lambda _value: None,                         # None
     }
+    _sentinel = b'\x01'
 
     @staticmethod
     def _extract_recreation_code(value):
@@ -312,7 +313,7 @@ class ShareableList:
                 self._types_mapping[type(item)]
                     if not isinstance(item, (str, bytes))
                     else self._types_mapping[type(item)] % (
-                        self._alignment * (len(item) // self._alignment + 1),
+                        self._alignment * ((len(item) + 1) // self._alignment + 1),
                     )
                 for item in sequence
             ]
@@ -353,7 +354,10 @@ class ShareableList:
                 "".join(_formats),
                 self.shm.buf,
                 self._offset_data_start,
-                *(v.encode(_enc) if isinstance(v, str) else v for v in sequence)
+                *((v.encode(_enc) + self._sentinel)
+                  if isinstance(v, str) else v + self._sentinel
+                  if isinstance(v, (str, bytes)) else v
+                  for v in sequence)
             )
             struct.pack_into(
                 self._format_packing_metainfo,
@@ -465,6 +469,7 @@ class ShareableList:
 
             encoded_value = (value.encode(_encoding)
                              if isinstance(value, str) else value)
+            encoded_value = value + self._sentinel
             if len(encoded_value) > allocated_length:
                 raise ValueError("bytes/str item exceeds available storage")
             if current_format[-1] == "s":
